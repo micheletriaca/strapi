@@ -170,7 +170,6 @@ const postAccessToken = (backendURL: string) =>
     credentials: 'include', // Include cookies for the refresh token
     headers: {
       Accept: 'application/json',
-      'Content-Type': 'application/json',
     },
   });
 
@@ -462,11 +461,28 @@ const getFetchClient = (defaultOptions: FetchConfig = {}): FetchClient => {
    */
   const getDefaultHeaders = (token = getToken()) => ({
     Accept: 'application/json',
-    'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
   });
 
-  const isFormDataRequest = (body: unknown) => body instanceof FormData;
+  const prepareWriteRequest = (
+    data: unknown,
+    token: string | null,
+    additionalHeaders?: FetchOptions['headers']
+  ) => {
+    const isFormData = data instanceof FormData;
+    const body = isFormData ? data : JSON.stringify(data);
+    const headers = new Headers({ ...getDefaultHeaders(token), ...additionalHeaders });
+
+    if (isFormData) {
+      // Fetch supplies the multipart Content-Type with its boundary.
+      headers.delete('Content-Type');
+    } else if (body !== undefined && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+
+    return { body, headers };
+  };
+
   const addPrependingSlash = (url: string) => (url.charAt(0) !== '/' ? `/${url}` : url);
 
   // This regular expression matches a string that starts with either "http://" or "https://" or any other protocol name in lower case letters, followed by "://" and ends with anything else
@@ -626,7 +642,7 @@ const getFetchClient = (defaultOptions: FetchConfig = {}): FetchClient => {
         requestToken = getToken();
         const { Authorization } = getDefaultHeaders(requestToken);
 
-        // For non-JSON response types, omit content negotiation headers that imply JSON
+        // Only send the default Accept header when the caller expects JSON.
         const defaultHeaders =
           responseType === 'json' ? getDefaultHeaders(requestToken) : { Authorization };
 
@@ -657,25 +673,14 @@ const getFetchClient = (defaultOptions: FetchConfig = {}): FetchClient => {
 
       const executeRequest = async () => {
         requestToken = getToken();
-        const headers = new Headers({
-          ...getDefaultHeaders(requestToken),
-          ...options?.headers,
-        });
-
-        /**
-         * we have to remove the Content-Type value if it was a formData request
-         * the browser will automatically set the header value
-         */
-        if (isFormDataRequest(data)) {
-          headers.delete('Content-Type');
-        }
+        const { body, headers } = prepareWriteRequest(data, requestToken, options?.headers);
 
         const response = await fetch(createRequestUrl(url), {
           signal: options?.signal ?? defaultOptions.signal,
           method: 'POST',
           credentials: 'include',
           headers,
-          body: isFormDataRequest(data) ? (data as FormData) : JSON.stringify(data),
+          body,
         });
         return responseInterceptor<TData>(response, options?.validateStatus);
       };
@@ -692,25 +697,14 @@ const getFetchClient = (defaultOptions: FetchConfig = {}): FetchClient => {
 
       const executeRequest = async () => {
         requestToken = getToken();
-        const headers = new Headers({
-          ...getDefaultHeaders(requestToken),
-          ...options?.headers,
-        });
-
-        /**
-         * we have to remove the Content-Type value if it was a formData request
-         * the browser will automatically set the header value
-         */
-        if (isFormDataRequest(data)) {
-          headers.delete('Content-Type');
-        }
+        const { body, headers } = prepareWriteRequest(data, requestToken, options?.headers);
 
         const response = await fetch(createRequestUrl(url), {
           signal: options?.signal ?? defaultOptions.signal,
           method: 'PUT',
           credentials: 'include',
           headers,
-          body: isFormDataRequest(data) ? (data as FormData) : JSON.stringify(data),
+          body,
         });
 
         return responseInterceptor<TData>(response, options?.validateStatus);

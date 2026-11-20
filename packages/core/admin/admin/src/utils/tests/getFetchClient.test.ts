@@ -214,6 +214,59 @@ describe('getFetchClient', () => {
     });
   });
 
+  describe('request Content-Type', () => {
+    beforeEach(() => {
+      (window.fetch as jest.Mock).mockResolvedValue({ status: 204, ok: true });
+    });
+
+    it.each([
+      { method: 'DELETE', send: () => getFetchClient().del('/api/data') },
+      { method: 'POST', send: () => getFetchClient().post('/api/data') },
+      { method: 'PUT', send: () => getFetchClient().put('/api/data') },
+    ])('omits Content-Type for a bodyless $method', async ({ send }) => {
+      await send();
+
+      const [, request] = (window.fetch as jest.Mock).mock.calls[0];
+      expect(request.body).toBeUndefined();
+      expect(request.headers.has('Content-Type')).toBe(false);
+      expect(request.headers.get('Accept')).toBe('application/json');
+    });
+
+    it.each(['post', 'put'] as const)('sets Content-Type for a JSON %s', async (method) => {
+      await getFetchClient()[method]('/api/data', null);
+
+      const [, request] = (window.fetch as jest.Mock).mock.calls[0];
+      expect(request.body).toBe('null');
+      expect(request.headers.get('Content-Type')).toBe('application/json');
+    });
+
+    it('preserves an explicit JSON media type', async () => {
+      await getFetchClient().put(
+        '/api/data',
+        {},
+        {
+          headers: { 'content-type': 'application/merge-patch+json' },
+        }
+      );
+
+      const [, request] = (window.fetch as jest.Mock).mock.calls[0];
+      expect(request.headers.get('Content-Type')).toBe('application/merge-patch+json');
+    });
+
+    it('lets fetch set the multipart boundary for FormData', async () => {
+      const formData = new FormData();
+      formData.append('name', 'example');
+
+      await getFetchClient().post('/api/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      const [, request] = (window.fetch as jest.Mock).mock.calls[0];
+      expect(request.body).toBe(formData);
+      expect(request.headers.has('Content-Type')).toBe(false);
+    });
+  });
+
   describe('responseType', () => {
     it('should return a Blob when responseType is blob', async () => {
       const blobContent = new Blob(['file content'], { type: 'application/zip' });
@@ -298,7 +351,7 @@ describe('getFetchClient', () => {
       expect(requestHeaders.has('Authorization')).toBe(true);
     });
 
-    it('should still send Accept and Content-Type headers for json requests', async () => {
+    it('sends Accept without Content-Type for GET requests expecting JSON', async () => {
       (window.fetch as jest.Mock).mockImplementationOnce(() =>
         Promise.resolve({
           status: 200,
@@ -311,8 +364,8 @@ describe('getFetchClient', () => {
       await fetchClient.get('/api/data');
 
       const requestHeaders: Headers = (window.fetch as jest.Mock).mock.calls[0][1].headers;
-      expect(requestHeaders.has('Accept')).toBe(true);
-      expect(requestHeaders.has('Content-Type')).toBe(true);
+      expect(requestHeaders.get('Accept')).toBe('application/json');
+      expect(requestHeaders.has('Content-Type')).toBe(false);
     });
 
     it('should include the response status and headers in the result', async () => {
@@ -468,11 +521,11 @@ describe('getFetchClient', () => {
       expect(window.fetch).toHaveBeenCalledTimes(3);
 
       // Verify token refresh was called
-      expect(window.fetch).toHaveBeenNthCalledWith(
-        2,
-        'http://localhost:1337/admin/access-token',
-        expect.objectContaining({ method: 'POST' })
-      );
+      expect(window.fetch).toHaveBeenNthCalledWith(2, 'http://localhost:1337/admin/access-token', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
     });
 
     it('attributes a failed retry to the refreshed token instead of the original token', async () => {
